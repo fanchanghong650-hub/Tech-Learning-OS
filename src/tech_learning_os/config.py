@@ -32,7 +32,7 @@ class Settings:
     def notes_path(self) -> str:
         book = self.current_book.lower().replace(" ", "-") if self.current_book else "general"
         chapter = self.current_chapter.lower().replace(" ", "-") if self.current_chapter else "misc"
-        return os.path.join(self.notes_dir, book, chapter)
+        return os.path.join(self.notes_dir, "Reading", book, chapter)
 
     def load_state(self):
         """从 .tlos_state.json 恢复上次的阅读上下文。"""

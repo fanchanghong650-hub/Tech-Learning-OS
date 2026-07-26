@@ -1,7 +1,10 @@
 """CLI 入口 — 命令行交互主循环"""
 
 import argparse
+import glob
+import os
 import subprocess
+from typing import Optional
 from .config import settings
 from .ai.client import AIClient
 from .notes.manager import save_note
@@ -18,6 +21,10 @@ def main():
     ctx.add_argument("--book", help="书名，如 'CSAPP'")
     ctx.add_argument("--chapter", help="章节，如 'Preface'")
     sub.add_parser("read", help="开始交互式阅读")
+    chk = sub.add_parser("check", help="检查英文写作表达")
+    chk.add_argument("path", nargs="?", help="要检查的 md 文件路径（可选）")
+    chk.add_argument("--type", choices=["summary", "diary"], help="内容类型")
+    chk.add_argument("--course", help="课程名（如 CSAPP）")
 
     args = parser.parse_args()
 
@@ -27,6 +34,8 @@ def main():
         cmd_context(args)
     elif args.command == "read":
         cmd_read()
+    elif args.command == "check":
+        cmd_check(args)
     else:
         parser.print_help()
 
@@ -133,3 +142,144 @@ def cmd_read():
         path = save_note(t, text, understanding)
         print(f"✅ 已保存: {path}")
     print()
+
+
+# === tlos check ===
+
+def _scan_check_dirs():
+    """扫描 notes/Summary/ 和 notes/Diary/ 下所有可用目录。"""
+    base = settings.notes_dir
+    dirs = []
+    for content_type in ["Summary", "Diary"]:
+        type_dir = os.path.join(base, content_type)
+        if not os.path.isdir(type_dir):
+            continue
+        # 二级目录（课程目录）
+        try:
+            entries = sorted(os.listdir(type_dir))
+        except OSError:
+            continue
+        for entry in entries:
+            course_dir = os.path.join(type_dir, entry)
+            if os.path.isdir(course_dir):
+                dirs.append({
+                    "type": content_type.lower(),
+                    "path": course_dir,
+                })
+        # 一级目录下直接有 .md 文件
+        if any(f.endswith(".md") for f in entries):
+            dirs.append({
+                "type": content_type.lower(),
+                "path": type_dir,
+            })
+    return dirs
+
+
+def _infer_type_from_path(path: str) -> str:
+    """从文件路径推断内容类型。"""
+    normalized = os.path.normpath(path)
+    if "Diary" in normalized.split(os.sep):
+        return "diary"
+    if "Summary" in normalized.split(os.sep):
+        return "summary"
+    return "summary"
+
+
+def _find_latest_md(directory: str) -> Optional[str]:
+    """递归查找目录下最新修改的 .md 文件。"""
+    pattern = os.path.join(directory, "**", "*.md")
+    files = glob.glob(pattern, recursive=True)
+    if not files:
+        return None
+    return max(files, key=os.path.getmtime)
+
+
+def _find_latest_check_md():
+    """在所有 check 目录中找最新的 .md 文件。"""
+    dirs = _scan_check_dirs()
+    candidates = []
+    for d in dirs:
+        f = _find_latest_md(d["path"])
+        if f:
+            candidates.append(f)
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
+
+
+
+def cmd_check(args):
+    filepath = args.path
+
+    if filepath:
+        if not os.path.isfile(filepath):
+            print(f"❌ 文件不存在：{filepath}")
+            return
+        content_type = _infer_type_from_path(filepath)
+    elif args.type:
+        base = os.path.join(settings.notes_dir, args.type.capitalize())
+        if args.course:
+            base = os.path.join(base, args.course)
+        if not os.path.isdir(base):
+            print(f"❌ 目录不存在：{base}")
+            return
+        filepath = _find_latest_md(base)
+        if not filepath:
+            print(f"❌ 目录下没有 .md 文件：{base}")
+            return
+        content_type = args.type
+    else:
+        filepath = _find_latest_check_md()
+        if not filepath:
+            print("❌ notes/Summary/ 和 notes/Diary/ 下没有找到 .md 文件。")
+            print("  请先创建目录并放入 .md 文件，例如：")
+            print("  mkdir -p notes/Summary/CSAPP")
+            return
+        content_type = _infer_type_from_path(filepath)
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    type_label = "技术总结" if content_type == "summary" else "日记"
+    print(f"🔍 写作检查 · {type_label}")
+    print(f"📄 {filepath} ({len(text)} 字符)")
+    print()
+
+    client = AIClient()
+    print("⏳ 检查中...")
+    try:
+        result = client.check_writing(text, content_type)
+    except RuntimeError as e:
+        print(f"❌ {e}")
+        return
+
+    print()
+    issues = result.get("issues", [])
+    type_label_zh = {
+        "grammar": "语法错误",
+        "word_choice": "用词不当",
+        "chinglish": "中式英语",
+        "unnatural": "表达不自然",
+        "missing_english": "缺英文表达",
+    }
+    for i, issue in enumerate(issues, 1):
+        itype = issue.get("issue_type", "")
+        tlabel = type_label_zh.get(itype, itype)
+        snippet = issue.get("text", "")
+        explanation = issue.get("explanation_zh", "")
+
+        if itype == "missing_english":
+            print(f"问题 {i}: \"{snippet}\"")
+            print(f"  类型: {tlabel}")
+            print(f"  建议: {explanation}")
+        else:
+            print(f"问题 {i}: \"{snippet}\"")
+            print(f"  类型: {tlabel}")
+            print(f"  说明: {explanation}")
+        print()
+
+    overall = result.get("overall_note", "")
+    if overall:
+        print(f"💡 整体建议: {overall}")
+        print()

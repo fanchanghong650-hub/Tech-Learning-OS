@@ -3,7 +3,10 @@
 import json
 from openai import OpenAI
 from ..config import settings
-from ..prompts.templates import SYSTEM_PROMPT, build_user_prompt
+from ..prompts.templates import (
+    SYSTEM_PROMPT, build_user_prompt,
+    CHECK_PROMPT_TECHNICAL, CHECK_PROMPT_CASUAL, build_check_user_prompt,
+)
 
 
 class AIClient:
@@ -60,4 +63,48 @@ class AIClient:
         result.setdefault("translation", "")
         result.setdefault("terms", [])
         result.setdefault("note", "")
+        return result
+
+    def check_writing(self, text: str, content_type: str = "summary") -> dict:
+        """检查用户的英文写作表达。
+
+        Args:
+            text: 用户写的中英文混合文本
+            content_type: 内容类型，"summary"（技术总结）或 "diary"（日记）
+
+        Returns:
+            dict: {"issues": [...], "overall_note": ""}
+
+        Raises:
+            RuntimeError: API 调用失败或返回格式异常
+        """
+        if content_type == "diary":
+            system_prompt = CHECK_PROMPT_CASUAL
+        else:
+            system_prompt = CHECK_PROMPT_TECHNICAL
+
+        user_prompt = build_check_user_prompt(text, content_type)
+
+        try:
+            response = self._client.chat.completions.create(
+                model=settings.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            raise RuntimeError(f"API 调用失败：{e}") from e
+
+        content = response.choices[0].message.content
+
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"AI 返回的不是合法 JSON：{e}\n\n原始返回：{content[:500]}") from e
+
+        result.setdefault("issues", [])
+        result.setdefault("overall_note", "")
         return result
