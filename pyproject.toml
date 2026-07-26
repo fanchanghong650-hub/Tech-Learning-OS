@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tech-learning-os"
+version = "0.1.0"
+description = "本地 AI 技术阅读助手"
+requires-python = ">=3.9"
+dependencies = [
+    "openai>=1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+tlos = "tech_learning_os.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
