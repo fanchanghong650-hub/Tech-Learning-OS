@@ -21,3 +21,6 @@ venv/
 
 # 本地状态
 .tlos_state.json
+
+# 个人笔记
+/notes/

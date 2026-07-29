@@ -1,85 +1,71 @@
-"""笔记管理器 — 生成和保存 Markdown 格式学习笔记"""
+"""笔记管理器 — 生成和追加 Markdown 格式学习笔记"""
 
 import os
-import re
 from datetime import datetime
 from ..config import settings
 
 
-def save_note(term_data: dict, original_text: str, my_understanding: str = "") -> str:
-    """保存一条学习笔记为 Markdown 文件。
+def append_note(original_text: str, result: dict, my_understanding: str = "", count: int = 0) -> str:
+    """追加一条学习笔记到当天的 Markdown 文件。
+
+    同一天同一书同一章的阅读都会追加到同一个 {date}.md 文件中。
 
     Args:
-        term_data: AI 返回的术语数据，格式为 {"term": "...", "definition_zh": "...", "chunks": [...], "related": [...]}
         original_text: 用户输入的英文原文
+        result: AI 返回的分析结果 {"translation": str, "chunks": [...]}
         my_understanding: 用户自己的理解（可选）
+        count: 本次会话中已读的序号（0 表示第一篇）
 
     Returns:
-        str: 保存的文件路径
+        str: 追加到的文件路径
     """
-    term_name = term_data.get("term", "note")
-    slug = _slugify(term_name)
-
-    # 确保目录存在
     os.makedirs(settings.notes_path, exist_ok=True)
 
-    filename = f"{datetime.now().strftime('%Y-%m-%d')}-{slug}.md"
+    filename = f"{datetime.now().strftime('%Y-%m-%d')}.md"
     filepath = os.path.join(settings.notes_path, filename)
+    is_new = not os.path.exists(filepath)
 
-    chunks_md = _format_chunks(term_data.get("chunks", []))
-    related_md = _format_related(term_data.get("related", []))
+    chunks_md = _format_chunks(result.get("chunks", []))
 
-    md = f"""# {term_data.get('term', '笔记')}
+    if settings.mode == "ln":
+        label_book = "系列"
+        label_ch = "卷"
+    else:
+        label_book = "书籍"
+        label_ch = "章节"
 
-> {original_text}
+    if is_new:
+        header = f"""# {datetime.now().strftime('%Y-%m-%d')}
 
-**书籍**：{settings.current_book}  ·  **章节**：{settings.current_chapter}  ·  **日期**：{datetime.now().strftime('%Y-%m-%d')}
+## {settings.current_book or '未设置'} · {settings.current_chapter or '未设置'}
 
----
+"""
+    else:
+        header = ""
 
-## 翻译
+    entry = f"""> {original_text}
 
-{term_data.get('translation', '')}
+**翻译**：{result.get('translation', '')}
 
-## 技术解释
-
-{term_data.get('definition_zh', '')}
-
-## 语块积累
+**语块积累**：
 
 {chunks_md}
 
-## 关联概念
+**我的理解**：{my_understanding if my_understanding else '（待填写）'}
 
-{related_md}
-
-## 我的理解
-
-{my_understanding if my_understanding else '（待填写）'}
 """
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(md)
+
+    with open(filepath, "a", encoding="utf-8") as f:
+        if header:
+            f.write(header)
+        if not is_new:
+            f.write("---\n\n")
+        f.write(entry)
 
     return filepath
 
 
-def _slugify(text: str) -> str:
-    """把术语名转为文件名安全的格式。
-
-    >>> _slugify("cache miss")
-    'cache-miss'
-    >>> _slugify("DRAM (Dynamic RAM)")
-    'dram-dynamic-ram'
-    """
-    text = text.lower().strip()
-    text = re.sub(r"[()]", "", text)
-    text = re.sub(r"\s+", "-", text)
-    text = re.sub(r"[^a-z0-9-]", "", text)
-    return text
-
-
 def _format_chunks(chunks: list) -> str:
-    """格式化语块列表为 Markdown 表格。"""
     if not chunks:
         return "（无）"
     lines = ["| 英文 | 中文 | 说明 |", "|------|------|------|"]
@@ -89,10 +75,3 @@ def _format_chunks(chunks: list) -> str:
         note = c.get("note", "")
         lines.append(f"| {en} | {zh} | {note} |")
     return "\n".join(lines)
-
-
-def _format_related(related: list) -> str:
-    """格式化关联概念列表。"""
-    if not related:
-        return "（无）"
-    return "\n".join(f"- {r}" for r in related)
